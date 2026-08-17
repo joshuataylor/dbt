@@ -1,10 +1,14 @@
 use crate::AdapterEngine;
 use crate::adapter::adapter_impl::AdapterImpl;
+use crate::connection::AdapterConnectionFactory;
+use crate::errors::{AdapterError, AdapterErrorKind};
+use crate::sql_types::make_arrow_field_v2;
 use crate::{AdapterResult, errors::AsyncAdapterResult, metadata::*, record_batch::RecordBatchExt};
 use arrow_schema::Schema;
-use dbt_common::cancellation::CancellationToken;
+use dbt_adbc::{Connection, QueryCtx};
+use dbt_common::cancellation::{Cancellable, CancellationToken};
 
-use arrow_array::{Array, Decimal128Array, RecordBatch, StringArray};
+use arrow_array::{Array, BooleanArray, Decimal128Array, RecordBatch, StringArray};
 
 use dbt_adapter_core::ExecutionPhase;
 use dbt_schemas::schemas::{
@@ -149,14 +153,109 @@ impl MetadataAdapter for PostgresMetadataAdapter {
 
     fn list_relations_schemas_inner(
         &self,
-        _unique_id: Option<String>,
-        _phase: Option<ExecutionPhase>,
-        _relations: &[Arc<dyn BaseRelation>],
-        _item_span_operation_id: Option<&str>,
-        _token: CancellationToken,
+        unique_id: Option<String>,
+        phase: Option<ExecutionPhase>,
+        relations: &[Arc<dyn BaseRelation>],
+        item_span_operation_id: Option<&str>,
+        token: CancellationToken,
     ) -> AsyncAdapterResult<'_, HashMap<String, AdapterResult<Arc<Schema>>>> {
-        let future = async move { todo!("PostgreSQL's list_relations_schemas") };
-        Box::pin(future)
+        type Acc = HashMap<String, AdapterResult<Arc<Schema>>>;
+
+        let factory = Box::new(AdapterConnectionFactory::new(self.adapter.engine().clone()));
+
+        let adapter = self.adapter.clone();
+        let token_clone = token.clone();
+        let map_f = move |conn: &'_ mut dyn Connection,
+                          relation: &Arc<dyn BaseRelation>|
+              -> AdapterResult<Arc<Schema>> {
+            let schema = relation.schema_as_str()?;
+            let identifier = relation.identifier_as_str()?;
+
+            // PostgreSQL has no DESCRIBE, so read the column set from the system
+            // catalogue. `format_type` reassembles the full declared type
+            // (length/precision included) the way `psql \d` does, `col_description`
+            // recovers any COMMENT, and `attnum > 0 AND NOT attisdropped` skips the
+            // system and dropped columns. `attnum` order is the table's column
+            // order. The connection is scoped to one database, so no catalog
+            // predicate is needed.
+            let sql = format!(
+                "SELECT
+    a.attname AS column_name,
+    pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+    NOT a.attnotnull AS is_nullable,
+    COALESCE(pg_catalog.col_description(a.attrelid, a.attnum), '') AS remarks
+FROM pg_catalog.pg_attribute a
+JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = '{schema}'
+  AND c.relname = '{identifier}'
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+ORDER BY a.attnum"
+            );
+
+            let mut ctx = QueryCtx::new_metadata().with_desc("Get table schema");
+            if let Some(node_id) = unique_id.clone() {
+                ctx = ctx.with_node_id(&node_id);
+            }
+            if let Some(phase) = phase {
+                ctx = ctx.with_phase(phase.as_str());
+            }
+            let (_, table) = adapter.query(&ctx, &mut *conn, &sql, None, token_clone.clone())?;
+            let batch = table.original_record_batch();
+
+            let column_names = batch.column_values::<StringArray>("column_name")?;
+            let data_types = batch.column_values::<StringArray>("data_type")?;
+            let is_nullables = batch.column_values::<BooleanArray>("is_nullable")?;
+            let comments = batch.column_values::<StringArray>("remarks")?;
+
+            let mut fields = Vec::with_capacity(batch.num_rows());
+            for i in 0..batch.num_rows() {
+                let name = column_names.value(i);
+                let data_type = data_types.value(i);
+                let is_nullable = is_nullables.value(i);
+                let comment = match comments.value(i) {
+                    "" => None,
+                    c => Some(c.to_string()),
+                };
+
+                let field = make_arrow_field_v2(
+                    adapter.engine().type_ops().as_ref(),
+                    String::from(name),
+                    data_type,
+                    Some(is_nullable),
+                    comment,
+                )?;
+                fields.push(field);
+            }
+
+            if fields.is_empty() {
+                return Err(AdapterError::new(
+                    AdapterErrorKind::UnexpectedResult,
+                    format!("no columns found in pg_catalog for {schema}.{identifier}"),
+                ));
+            }
+
+            Ok(Arc::new(Schema::new(fields)))
+        };
+
+        let reduce_f = |acc: &mut Acc,
+                        relation: Arc<dyn BaseRelation>,
+                        schema: AdapterResult<Arc<Schema>>|
+         -> Result<(), Cancellable<AdapterError>> {
+            acc.insert(relation.semantic_fqn(), schema);
+            Ok(())
+        };
+
+        run_schema_cache_map_reduce(
+            factory,
+            relations.to_vec(),
+            item_span_operation_id,
+            map_f,
+            reduce_f,
+            None,
+            token,
+        )
     }
 
     fn list_relations_schemas_by_patterns_inner(

@@ -1,0 +1,7 @@
+kind: Features
+body: Implement Postgres column schema introspection (list_relations_schemas) from pg_catalog, so sources and seeds without declared columns no longer panic
+time: 2026-10-06T23:27:11+08:00
+custom:
+    author: joshuataylor
+    issue: ''
+    project: dbt-core
