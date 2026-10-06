@@ -211,3 +211,58 @@ impl MetadataAdapter for PostgresMetadataAdapter {
         Box::pin(future)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::errors::AdapterErrorKind;
+    use crate::relation::Relation;
+    use crate::sql_types::DefaultTypeOps;
+    use crate::stmt_splitter::DefaultStmtSplitter;
+    use dbt_common::cancellation::{Cancellable, never_cancels};
+    use dbt_schemas::schemas::relations::DEFAULT_RESOLVED_QUOTING;
+    use dbt_test_primitives::assert_contains;
+
+    fn postgres_metadata_adapter() -> PostgresMetadataAdapter {
+        let adapter = AdapterImpl::new_mock(
+            AdapterType::Postgres,
+            BTreeMap::new(),
+            DEFAULT_RESOLVED_QUOTING,
+            Arc::new(DefaultTypeOps::new(AdapterType::Postgres)),
+            Arc::new(DefaultStmtSplitter),
+        );
+        PostgresMetadataAdapter::new(Arc::clone(adapter.engine()))
+    }
+
+    #[test]
+    fn freshness_returns_not_supported_without_querying() {
+        // The mock engine has no connection behind it, so reaching the
+        // database would fail with a different error kind: `NotSupported`
+        // here proves the adapter answered up front, and the message tells
+        // the user what to configure instead.
+        let metadata = postgres_metadata_adapter();
+        let relation = Arc::new(
+            Relation::new(
+                AdapterType::Postgres,
+                "db".to_string(),
+                "public".to_string(),
+                "orders".to_string(),
+            )
+            .with_quoting(DEFAULT_RESOLVED_QUOTING),
+        ) as Arc<dyn BaseRelation>;
+
+        let result = futures::executor::block_on(metadata.freshness(&[relation], never_cancels()));
+
+        match result {
+            Err(Cancellable::Error(err)) => {
+                assert_eq!(err.kind(), AdapterErrorKind::NotSupported);
+                assert_contains!(err.message(), "loaded_at_field");
+            }
+            Err(Cancellable::Cancelled) => panic!("freshness was cancelled"),
+            Ok(freshness) => panic!(
+                "expected NotSupported, got freshness for {:?}",
+                freshness.keys().collect::<Vec<_>>()
+            ),
+        }
+    }
+}
