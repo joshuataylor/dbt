@@ -167,12 +167,25 @@ impl MetadataAdapter for PostgresMetadataAdapter {
         todo!("PostgresAdapter::list_relations_schemas_by_patterns")
     }
 
+    /// Metadata-based freshness is not supported on Postgres: the catalog
+    /// records no last-modified time for a table (Redshift's implementation
+    /// reads its own `stl_insert` system table, which Postgres lacks), and
+    /// dbt-postgres never declared the `TableLastModifiedMetadata`
+    /// capability. Return `NotSupported` rather than panicking, so `dbt
+    /// source freshness` reports a clean error and `dbt build` falls back
+    /// for sources without a `loaded_at_field`.
     fn freshness_inner(
         &self,
         _relations: &[Arc<dyn BaseRelation>],
         _token: CancellationToken,
     ) -> AsyncAdapterResult<'_, BTreeMap<String, MetadataFreshness>> {
-        todo!("PostgresAdapter::freshness")
+        Box::pin(async {
+            Err(Cancellable::Error(AdapterError::new(
+                AdapterErrorKind::NotSupported,
+                "the postgres adapter does not support metadata-based freshness checks; \
+                 set a `loaded_at_field` (or `loaded_at_query`) on the source",
+            )))
+        })
     }
 
     fn create_schemas_if_not_exists(
