@@ -534,6 +534,16 @@ mod tests {
     }
 
     #[test]
+    fn validate_git_argument_rejects_option_shaped_values() {
+        assert!(validate_git_argument("https://github.com/o/r", "repository").is_ok());
+        assert!(validate_git_argument("v1.0.0", "revision").is_ok());
+        assert!(validate_git_argument("HEAD", "revision").is_ok());
+        assert!(validate_git_argument("--upload-pack=touch /tmp/x", "revision").is_err());
+        assert!(validate_git_argument("-c", "revision").is_err());
+        assert!(validate_git_argument("", "revision").is_err());
+    }
+
+    #[test]
     fn test_validate_subdirectory() {
         assert!(validate_subdirectory("dbt-utils").is_ok());
         assert!(validate_subdirectory("nested/path/pkg").is_ok());

@@ -262,3 +262,40 @@ async fn ls_remote_resolve(repo_url: &str, revision: &str) -> FsResult<String> {
         "Could not resolve ref '{revision}' via ls-remote"
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A revision shaped like a git option must never reach git as one.
+    /// Before the `--` separator, `git fetch <url> --upload-pack=<cmd>` ran
+    /// `<cmd>` on the machine running `dbt deps`.
+    #[tokio::test]
+    async fn fetch_does_not_execute_an_option_shaped_revision() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let marker = tmp.path().join("MARKER");
+        let clone_dir = tmp.path().join("clone");
+        let revision = format!("--upload-pack=touch {};false", marker.display());
+
+        let result =
+            checkout_revision("file:///nonexistent/repo.git", &clone_dir, &revision, None).await;
+
+        assert!(result.is_err(), "fetch of a bogus repo must fail");
+        assert!(
+            !marker.exists(),
+            "the option-shaped revision was executed as a git option"
+        );
+    }
+
+    #[tokio::test]
+    async fn ls_remote_does_not_execute_an_option_shaped_revision() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let marker = tmp.path().join("MARKER");
+        let revision = format!("--upload-pack=touch {};false", marker.display());
+
+        let result = ls_remote_resolve("file:///nonexistent/repo.git", &revision).await;
+
+        assert!(result.is_err());
+        assert!(!marker.exists());
+    }
+}
