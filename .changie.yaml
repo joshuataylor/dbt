@@ -5,39 +5,96 @@ versionHeaderPath: ""
 changelogPath: CHANGELOG.md
 versionExt: md
 envPrefix: "CHANGIE_"
+# The compare link gives every release a path to its commits. The first
+# release has no previous version, so it gets the date alone.
 versionFormat: |-
   ## {{.Version}}
 
-  Released {{.Time.Format "January 02, 2006"}}
+  Released {{.Time.Format "2006-01-02"}}
+  {{- if and .PreviousVersion (ne .PreviousVersion "v0.0.0") (ne .PreviousVersion "0.0.0") }} ([changes since {{.PreviousVersion}}](https://github.com/dbt-labs/dbt/compare/v{{.PreviousVersion}}...v{{.Version}})){{ end }}
 kindFormat: "### {{.Kind}}"
+
+# Entries must say something: "Security fix" on its own is rejected.
+body:
+  minLength: 20
+  maxLength: 500
 
 custom:
   - key: issue
-    label: "[Optional] dbt-core issue number (separated by a single space if multiple)"
+    label: "[Optional] dbt-labs/dbt issue number (separated by a single space if multiple)"
     type: string
-    required: false
+    optional: true
+  - key: pr
+    label: "[Optional] dbt-labs/dbt pull request number (separated by a single space if multiple)"
+    type: string
+    optional: true
   - key: author
-    label: "[Optional] Author's GitHub handle without the @ symbol (separated by a single space if multiple)"
+    label: "Author's GitHub handle without the @ symbol (separated by a single space if multiple)"
     type: string
-    required: false
+    minLength: 1
+  # Rendered as a consistent "[Area]" prefix, so bodies don't need their own.
+  - key: area
+    label: "[Optional] Area of the change"
+    type: enum
+    optional: true
+    enumOptions:
+      - BigQuery
+      - ClickHouse
+      - Databricks
+      - DuckDB
+      - Postgres
+      - Redshift
+      - Snowflake
+      - CLI
+      - Deps
+      - Docs
+      - Jinja
+      - Lake Compute
+      - LSP
+      - Parser
+      - State
 
-# Change format: optional issue links only. The project field is retained in the
-# change files (for the internal changelog) but not rendered here. Issue links
-# are only rendered for dbt-core changes and only when an issue number is present.
+# Change format:
+#   - [Area] <body> (<issue and PR links>) -- <authors>, <date>
+#     - Migration: <what to do> (Breaking Changes only)
+# The project field is retained in the change files (for the internal
+# changelog) but not rendered here.
 changeFormat: |-
-  {{- $IssueList := list }}
-  {{- if eq $.Custom.project "dbt-core" }}
-  {{- range $issueNbr := splitList " " $.Custom.issue }}
-    {{- if $issueNbr }}
-      {{- $changeLink := "[#nbr](https://github.com/dbt-labs/dbt-core/issues/nbr)" | replace "nbr" $issueNbr }}
-      {{- $IssueList = append $IssueList $changeLink  }}
-    {{- end -}}
-  {{- end -}}
-  {{- end -}}
-  - {{.Body}}{{if $IssueList}} ({{ range $index, $element := $IssueList }}{{if $index}}, {{end}}{{$element}}{{end}}){{end}}
+  {{- $refs := list }}
+  {{- range $nbr := splitList " " (default "" $.Custom.issue) }}
+    {{- if $nbr }}
+      {{- $refs = append $refs (printf "[#%s](https://github.com/dbt-labs/dbt/issues/%s)" $nbr $nbr) }}
+    {{- end }}
+  {{- end }}
+  {{- range $nbr := splitList " " (default "" $.Custom.pr) }}
+    {{- if $nbr }}
+      {{- $refs = append $refs (printf "[PR #%s](https://github.com/dbt-labs/dbt/pull/%s)" $nbr $nbr) }}
+    {{- end }}
+  {{- end }}
+  {{- $meta := list }}
+  {{- range $author := splitList " " (default "" $.Custom.author) }}
+    {{- if hasSuffix "[bot]" $author }}
+      {{- $meta = append $meta (printf "@%s" $author) }}
+    {{- else if $author }}
+      {{- $meta = append $meta (printf "[@%s](https://github.com/%s)" $author $author) }}
+    {{- end }}
+  {{- end }}
+  {{- $meta = append $meta ($.Time.Format "2006-01-02") }}
+  {{- $migration := default "" $.Custom.migration -}}
+  - {{ if $.Custom.area }}[{{ $.Custom.area }}] {{ end }}{{ .Body }}{{ if $refs }} ({{ join ", " $refs }}){{ end }} -- {{ join ", " $meta }}
+  {{- if $migration }}
+    - Migration: {{ $migration }}
+  {{- end }}
 
 kinds:
+  # Renamed or removed flags and environment variables, changed defaults and
+  # changed artifact shapes go here, with what the user has to do about it.
   - label: Breaking Changes
+    additionalChoices:
+      - key: migration
+        label: "What a user has to change when upgrading"
+        type: string
+        minLength: 10
   - label: Features
   - label: Fixes
   - label: Under the Hood
@@ -57,28 +114,26 @@ newlines:
   endOfVersion: 1
 
 # Contributors section (mirrors fs). Set FUSION_TEAM (space-separated handles)
-# to exclude maintainers; otherwise all non-bot authors are listed. Issue links
-# resolve to the dbt-core repo, matching changeFormat above.
+# to exclude maintainers; otherwise all non-bot authors are listed. Bot accounts
+# ("name[bot]") and coding-agent handles are never contributors.
 footerFormat: |
   {{- $contributorDict := dict }}
   {{- $fusion_team_env := default "" .Env.FUSION_TEAM }}
   {{- $fusion_team := splitList " " $fusion_team_env }}
-  {{- $maintainers := list "dependabot[bot]"}}
+  {{- $maintainers := list "claude" "copilot" "codex" "cursoragent" "devin-ai-integration" }}
   {{- range $team_member := $fusion_team }}
     {{- $maintainers = append $maintainers (lower $team_member) }}
   {{- end }}
   {{- range $change := .Changes }}
-    {{- $authorList := splitList " " $change.Custom.author }}
+    {{- $authorList := splitList " " (default "" $change.Custom.author) }}
     {{- range $author := $authorList }}
-      {{- if and $author (not (has (lower $author) $maintainers)) }}
+      {{- if and $author (not (hasSuffix "[bot]" $author)) (not (has (lower $author) $maintainers)) }}
         {{- $IssueList := list }}
-        {{- if eq $change.Custom.project "dbt-core" }}
-        {{- range $issueNbr := splitList " " $change.Custom.issue }}
+        {{- range $issueNbr := splitList " " (default "" $change.Custom.issue) }}
           {{- if $issueNbr }}
-            {{- $changeLink := "[#nbr](https://github.com/dbt-labs/dbt-core/issues/nbr)" | replace "nbr" $issueNbr }}
+            {{- $changeLink := printf "[#%s](https://github.com/dbt-labs/dbt/issues/%s)" $issueNbr $issueNbr }}
             {{- $IssueList = append $IssueList $changeLink }}
           {{- end }}
-        {{- end }}
         {{- end }}
         {{- if hasKey $contributorDict $author }}
           {{- $contributorDict = set $contributorDict $author (concat (get $contributorDict $author) $IssueList) }}

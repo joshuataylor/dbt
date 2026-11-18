@@ -72,4 +72,20 @@ changie new
 
 Commit the file that's created and your changelog entry is complete!
 
+changie asks for:
+
+- **Kind.** Use `Breaking Changes` when a user has to act on upgrade: a renamed or removed flag or environment variable, a changed default, a changed artifact shape. It then asks for a one-line migration note, which is printed under the entry.
+- **Body.** One or two sentences on what changed for a user, between 20 and 500 characters. Don't start it with an adapter or component tag such as `[BigQuery]`: pick the area instead.
+- **Issue** and **pull request.** The `dbt-labs/dbt` numbers, digits only, separated by a space if there are several. Leave them empty if there are none.
+- **Author.** Your GitHub handle, without the `@`.
+- **Area.** The adapter or component the change belongs to, if one fits.
+
+Each entry is rendered with its links, author and date, for example:
+
+```
+- [BigQuery] Match partition fields case-insensitively when inspecting existing tables ([#14646](https://github.com/dbt-labs/dbt/issues/14646)) -- [@octocat](https://github.com/octocat), 2026-11-02
+```
+
+Don't write or copy an entry file by hand.
+
 You don't need to worry about which `dbt` version your change will go into. Just create the changelog entry with `changie`, and open your PR against the `main` branch. All merged changes will be included in the next release of `dbt`.  If a changelog is not required, a maintainer can add the label `Skip Changelog` to bypass this requirement.
