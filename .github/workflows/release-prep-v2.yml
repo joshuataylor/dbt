@@ -14,8 +14,9 @@
 # **when?**
 # `workflow_call` only — invoked by `release-v2.yml` (and any future caller).
 #
-# Changelog behaviour: `changie batch` always consumes (deletes) the
-# `.changes/unreleased/*.yaml` entries it batches, including for prerelease
+# Changelog behaviour: `changie batch` always consumes the
+# `.changes/unreleased/*.yaml` entries it batches (moving them to
+# `.changes/<version>/`), including for prerelease
 # versions (X.Y.Z-alpha.N / -rc.N). During the alpha phase that's intended —
 # each entry appears under exactly the (pre)release it first shipped in.
 # `.changes/<version>.md` is the file `release-v2.yml`'s github-release job
@@ -78,6 +79,9 @@ jobs:
         with:
           ref: ${{ inputs.source_ref }}
           fetch-tags: true
+          # Full history: the changelog step looks up the commit that added
+          # each unreleased entry.
+          fetch-depth: 0
 
       - name: Reject pre-existing tag
         env:
@@ -141,11 +145,20 @@ jobs:
       # release-branch checkout; the generated `.changes/${VERSION}.md`, the
       # consumed `.changes/unreleased/*.yaml`, and the regenerated CHANGELOG.md
       # are committed alongside the version bump below.
+      #
+      # Before batching, each entry gets the commit that added it written into
+      # its `custom.commit`, which the change format links. `--move-dir` then
+      # keeps the batched entries under `.changes/${VERSION}/` instead of
+      # deleting them, so the author, issue and commit of every released entry
+      # stay readable in the tree.
+      - name: Record the commit behind each changelog entry
+        run: python3 .github/scripts/changelog_fragments.py stamp-commits
+
       - name: Batch changelog
         uses: miniscruff/changie-action@11bcad388e7973948cbcecb10863baf024d5f607 # miniscruff/changie-action@v3
         with:
           version: v1.24.0
-          args: batch ${{ inputs.version }}
+          args: batch ${{ inputs.version }} --move-dir ${{ inputs.version }}
 
       - name: Merge changelog into CHANGELOG.md
         uses: miniscruff/changie-action@11bcad388e7973948cbcecb10863baf024d5f607 # miniscruff/changie-action@v3
@@ -158,8 +171,8 @@ jobs:
           VERSION: ${{ inputs.version }}
           BRANCH: ${{ steps.bump.outputs.branch }}
         run: |
-          # `git add <dir>` stages new files, edits, and the deletion of the
-          # batched-away unreleased entries.
+          # `git add <dir>` stages new files, edits, and the move of the
+          # batched unreleased entries into `.changes/${VERSION}/`.
           git add .changes CHANGELOG.md
           git commit \
             -m "chore: release v${VERSION}" \

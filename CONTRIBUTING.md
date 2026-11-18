@@ -86,6 +86,10 @@ Each entry is rendered with its links, author and date, for example:
 - [BigQuery] Match partition fields case-insensitively when inspecting existing tables ([#14646](https://github.com/dbt-labs/dbt/issues/14646)) -- [@octocat](https://github.com/octocat), 2026-11-02
 ```
 
-Don't write or copy an entry file by hand.
+Don't write or copy an entry file by hand, and don't add a `commit` field: the release adds the commit link itself. A check on your PR validates the entry, and you can run it locally from the repository root (it needs [`yq`](https://github.com/mikefarah/yq)):
+
+```shell
+python3 .github/scripts/changelog_fragments.py lint
+```
 
 You don't need to worry about which `dbt` version your change will go into. Just create the changelog entry with `changie`, and open your PR against the `main` branch. All merged changes will be included in the next release of `dbt`.  If a changelog is not required, a maintainer can add the label `Skip Changelog` to bypass this requirement.

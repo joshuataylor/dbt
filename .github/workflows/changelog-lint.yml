@@ -1,0 +1,58 @@
+# **what?**
+# Validates the changie entries a pull request adds or edits under
+# .changes/unreleased, and checks the changelog still renders.
+#
+# **why?**
+# `changelog-existence.yml` only checks that an entry exists. This checks that
+# it is one `changie new` would have written: a known kind, a body that says
+# something, numeric issue and pull request numbers, real GitHub handles, and
+# only the custom keys `.changie.yaml` declares.
+#
+# **when?**
+# On pull requests that touch the entries, the changie config or the checker.
+
+name: Lint Changelog Entries
+
+on:
+  pull_request:
+    paths:
+      - ".changes/unreleased/**"
+      - ".changie.yaml"
+      - ".github/scripts/changelog_fragments.py"
+      - ".github/workflows/changelog-lint.yml"
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ${{ vars.UBUNTU_LATEST }}
+    timeout-minutes: 5
+
+    steps:
+      # Depth 2 so the merge commit's first parent (the base) is there to diff against.
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      # Only the entries this pull request adds or edits, so an older entry
+      # that predates a rule doesn't fail someone else's change.
+      - name: Check changed entries
+        run: |
+          git diff --name-only --diff-filter=AM -z HEAD^1 HEAD -- .changes/unreleased \
+            | xargs -0 --no-run-if-empty python3 .github/scripts/changelog_fragments.py lint
+
+      - name: Check the changelog renders
+        uses: miniscruff/changie-action@11bcad388e7973948cbcecb10863baf024d5f607 # miniscruff/changie-action@v3
+        with:
+          version: v1.24.0
+          args: batch patch --dry-run --keep

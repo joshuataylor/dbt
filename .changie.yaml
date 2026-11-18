@@ -55,10 +55,12 @@ custom:
       - State
 
 # Change format:
-#   - [Area] <body> (<issue and PR links>) -- <authors>, <date>
+#   - [Area] <body> (<issue and PR links>) -- <authors>, <date>, <commit>
 #     - Migration: <what to do> (Breaking Changes only)
 # The project field is retained in the change files (for the internal
-# changelog) but not rendered here.
+# changelog) but not rendered here. `commit` is not prompted for: the release
+# job writes it into each change file before batching (see
+# .github/scripts/changelog_fragments.py).
 changeFormat: |-
   {{- $refs := list }}
   {{- range $nbr := splitList " " (default "" $.Custom.issue) }}
@@ -80,6 +82,10 @@ changeFormat: |-
     {{- end }}
   {{- end }}
   {{- $meta = append $meta ($.Time.Format "2006-01-02") }}
+  {{- $commit := default "" $.Custom.commit }}
+  {{- if $commit }}
+    {{- $meta = append $meta (printf "[%s](https://github.com/dbt-labs/dbt/commit/%s)" (trunc 9 $commit) $commit) }}
+  {{- end }}
   {{- $migration := default "" $.Custom.migration -}}
   - {{ if $.Custom.area }}[{{ $.Custom.area }}] {{ end }}{{ .Body }}{{ if $refs }} ({{ join ", " $refs }}){{ end }} -- {{ join ", " $meta }}
   {{- if $migration }}
